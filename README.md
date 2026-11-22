@@ -61,31 +61,3 @@ After the marketplace repository is public, replace `<github-owner>` and `<repos
 ```
 
 For this setup, the marketplace and plugin live in the same repository; the catalog points to `./plugins/agent-fleet`.
-
-## Separate GitHub Account
-
-Copilot's sign-in and GitHub publishing are independent. You can keep VS Code Copilot signed into `marcus_trc`; that does not decide which identity authors commits or authenticates pushes.
-
-Git uses two separate settings:
-
-- **Commit attribution** comes from this repository's local `user.name` and `user.email`. Set the email to one verified on the other GitHub account, or that account's GitHub-provided private `noreply` address, so commits can appear on that profile.
-- **Push authentication** comes from the remote URL and SSH key or Git credential. For this one-repository setup, a dedicated SSH host alias is the clearest separation; don't switch global Git identity or the Copilot sign-in.
-
-This folder is an independent Git repository. No remote, GitHub identity, or credentials have been configured. After creating a repository under the other account, set its local author identity and add a remote using an SSH alias:
-
-```powershell
-git config --local user.name "Other Account Name"
-git config --local user.email "verified-email-or-other-account-noreply-address"
-git remote add origin git@github-other:OTHER_USERNAME/agent-fleet-plugin.git
-git config --local --get user.email
-git remote -v
-```
-
-Configure `github-other` in your user SSH config to use a key registered only with the other account, then verify it with `ssh -T git@github-other` before pushing. If using HTTPS and GitHub CLI instead, `gh auth switch --user OTHER_USERNAME` switches the CLI's active account and may affect other CLI operations; it is not required for Copilot. Never put tokens or private keys in this repository or in prompts. Choose a license before publishing publicly.
-
-## Adapted Design Practices
-
-- Keep this as the canonical Claude-format source until a second harness needs different behavior. Do not hand-maintain duplicate prompts; add a small generator and drift check only when there is a concrete compatibility need.
-- Keep roles narrow, descriptions actionable, and tool permissions appropriate to each job. Tool lists guide runtime behavior but are not a security boundary.
-- Run free structural/unit checks on every change. Model-backed plugin evals are opt-in, cost-bearing experiments; label scores as model-judged unless calibrated against human-reviewed examples.
-- Bump the plugin and marketplace entry versions together for releases. CI checks that they remain synchronized.
