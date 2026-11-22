@@ -1,0 +1,23 @@
+name: quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  offline-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run unit and package-layout tests
+        run: python -m unittest discover -s plugins/agent-fleet/tests -v
+      - name: Check release metadata
+        run: python plugins/agent-fleet/tests/check_release_metadata.py
