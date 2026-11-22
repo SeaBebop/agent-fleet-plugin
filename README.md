@@ -24,6 +24,14 @@ In Claude Code, invoke `/agent-fleet:run-change`. The skill coordinates the work
 
 In VS Code, choose the GitHub Copilot harness, open Agent Customizations, and install the plugin from the local folder `plugins/agent-fleet` while developing. For a published repository, use the repository's marketplace source. Start with a low-risk task and inspect the agent's available tools and actions: a compatible Claude manifest does not mean every Claude tool or workflow feature behaves identically in Copilot.
 
+## Use It in VS Code
+
+For a local checkout, select the **Copilot** harness, open **Chat: Open Customizations**, choose **Plugins**, and select the `+` button next to **User** or **Workspace**. In the source dialog, choose the local folder `plugins/agent-fleet` inside this repository. That folder contains the plugin's `.claude-plugin/plugin.json` manifest. Install it, start a fresh Copilot session, and invoke `/agent-fleet:run-change`.
+
+For the GitHub-hosted repository, use the marketplace flow instead. The repository root contains `.claude-plugin/marketplace.json`; the install-from-source `+` flow expects a plugin root, which is nested here. In Agent Customizations, open **Plugins > Browse Marketplace > Configure Marketplaces**, add the GitHub repository, browse the `agent-fleet-tools` marketplace, and install **Agent Fleet**. Review the repository and trust prompt before installation.
+
+After installing, confirm the plugin is listed and enabled, start a new Copilot session, and try a low-risk task. Inspect its actions and tool use; format compatibility does not guarantee every Claude-specific feature behaves identically in Copilot.
+
 `claude plugin validate .` checks the marketplace catalog. Validate the plugin directory separately as shown above; the commands have different targets.
 
 The report gate can be run from any consumer repository:
