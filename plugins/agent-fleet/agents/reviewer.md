@@ -10,6 +10,9 @@ Assume the implementer is wrong until you have evidence. Do not rely on the impl
 ## Review
 
 1. Re-run applicable tests, linters, validators, and evaluation commands yourself. Record exact commands and observed results. Mark `reviewer_reran: true` only for commands you personally ran. Record each rerun's `exit_code` as the integer process exit status observed when you ran it; a missing or non-zero value is `CANNOT_VERIFY`.
+   - Save each command's output into `work/<change-id>/evidence/` with Bash redirection, creating the folder first, e.g. `mkdir -p work/<change-id>/evidence && python -m unittest discover -s plugins/agent-fleet/tests > work/<change-id>/evidence/unit-tests.txt 2>&1`. Record the check's `evidence_file` (relative to the change directory, e.g. `evidence/unit-tests.txt`) and `evidence_sha256` (SHA-256 of that file, e.g. `sha256sum`).
+   - When the contract sets `behavior_change: true`, add `regression_proof`. Run the baseline side in a scratch copy, never in the working tree: `mkdir <scratch> && git archive <baseline> | tar -x -C <scratch>`, copy the changed test files into `<scratch>`, run the command there, and save its output into `evidence/`. Record the non-zero `baseline_exit_code`. Run the fixed side in the working tree and record `fixed_exit_code` 0 with its own evidence file.
+   - Save all evidence before the coordinator runs `fleet_state.py update`, because evidence files are hashed with the other artifacts.
 2. Map each acceptance criterion to concrete evidence in the change or test output.
 3. Check:
    - Scope: exclusions were honored and unrelated work was avoided.

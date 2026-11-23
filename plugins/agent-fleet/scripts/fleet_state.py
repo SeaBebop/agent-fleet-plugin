@@ -17,14 +17,21 @@ STATUSES = ("IN_PROGRESS", "PASS", "FAIL", "PARTIAL", "ERROR", "TIMEOUT")
 MAX_REPAIR_ROUNDS = 2
 CHANGE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 STATE_FILE = "state.json"
+EVIDENCE_DIR = "evidence"
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def hash_artifacts(directory: Path) -> dict[str, str]:
-    return {
-        name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
-        for name in ARTIFACTS
-        if (directory / name).is_file()
-    }
+    hashes = {name: _sha256(directory / name) for name in ARTIFACTS if (directory / name).is_file()}
+    evidence = directory / EVIDENCE_DIR
+    if evidence.is_dir():
+        for path in sorted(evidence.rglob("*")):
+            if path.is_file() and not path.is_symlink():
+                hashes[path.relative_to(directory).as_posix()] = _sha256(path)
+    return hashes
 
 
 def read_state(directory: Path) -> dict[str, Any]:

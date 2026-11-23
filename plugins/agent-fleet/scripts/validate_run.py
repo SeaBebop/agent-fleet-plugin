@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
-from fleet_state import ARTIFACTS, MAX_REPAIR_ROUNDS, STATUSES, hash_artifacts
+from fleet_state import ARTIFACTS, EVIDENCE_DIR, MAX_REPAIR_ROUNDS, STATUSES, hash_artifacts
 
 ALLOWED_BLOCKERS = {
     "MISSING_CONTEXT",
@@ -28,6 +29,41 @@ VALIDATABLE_STATUSES = ("IN_PROGRESS", "PASS")
 
 def _text(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def _evidence_problem(directory: Path, item: dict[str, Any]) -> str | None:
+    """Return why the evidence_file/evidence_sha256 pair does not verify, or None when it does."""
+    evidence_file = item.get("evidence_file")
+    expected = item.get("evidence_sha256")
+    if not _text(evidence_file) or not _text(expected):
+        return "evidence_file and evidence_sha256 are required."
+    try:
+        evidence_root = (directory / EVIDENCE_DIR).resolve()
+        target = (directory / evidence_file).resolve()
+        if evidence_root not in target.parents:
+            return f"evidence_file must be inside {EVIDENCE_DIR}/ of the change directory."
+        if not target.is_file():
+            return f"evidence file {evidence_file} is missing."
+        actual = hashlib.sha256(target.read_bytes()).hexdigest()
+    except (OSError, ValueError):
+        return f"evidence file {evidence_file} cannot be read."
+    if actual != expected:
+        return f"evidence file {evidence_file} does not match evidence_sha256."
+    return None
+
+
+def _regression_proof_problem(directory: Path, proof: Any) -> str | None:
+    if not isinstance(proof, dict):
+        return "regression_proof must be an object."
+    if not _text(proof.get("command")):
+        return "regression_proof needs a non-empty command."
+    baseline = proof.get("baseline_exit_code")
+    if type(baseline) is not int or baseline == 0:
+        return "regression_proof baseline_exit_code must be a non-zero integer."
+    fixed = proof.get("fixed_exit_code")
+    if type(fixed) is not int or fixed != 0:
+        return "regression_proof fixed_exit_code must be the integer 0."
+    return _evidence_problem(directory, proof)
 
 
 def validate_change(directory: Path) -> dict[str, Any]:
@@ -85,9 +121,15 @@ def validate_change(directory: Path) -> dict[str, Any]:
 
     criteria_ids: list[str] = []
     contract_commands: list[str] = []
+    behavior_change = False
     if isinstance(contract, dict):
         if contract.get("change_id") != change_id:
             block("GATE_FAILED", "contract.json change_id does not match state.json.")
+        declared = contract.get("behavior_change", False)
+        if type(declared) is bool:
+            behavior_change = declared
+        else:
+            block("GATE_FAILED", "contract.json behavior_change must be true or false when present.")
         criteria = contract.get("acceptance_criteria")
         if (
             not isinstance(criteria, list)
@@ -143,10 +185,20 @@ def validate_change(directory: Path) -> dict[str, Any]:
                     code = "TEST_FAIL" if isinstance(check, dict) and check.get("status") == "FAIL" else "CANNOT_VERIFY"
                     block(code, "Every check needs a name, command, integer exit_code of 0, PASS result, and reviewer rerun.")
                     break
+            for check in checks:
+                problem = _evidence_problem(directory, check) if isinstance(check, dict) else None
+                if problem:
+                    block("CANNOT_VERIFY", f"Check evidence rejected: {problem}")
+                    break
             rerun = {check.get("command") for check in checks if isinstance(check, dict) and check.get("reviewer_reran") is True}
             for command in contract_commands:
                 if command not in rerun:
                     block("CANNOT_VERIFY", f"Contract check was not rerun by the reviewer: {command}")
+
+        if behavior_change:
+            problem = _regression_proof_problem(directory, review.get("regression_proof"))
+            if problem:
+                block("CANNOT_VERIFY", f"Behavior change needs a valid regression_proof: {problem}")
 
         unresolved = review.get("blockers")
         if not isinstance(unresolved, list):

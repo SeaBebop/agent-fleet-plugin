@@ -1,3 +1,4 @@
+import hashlib
 import json
 import subprocess
 import sys
@@ -18,6 +19,15 @@ def write_json(directory, name, value):
     (directory / name).write_text(json.dumps(value), encoding="utf-8")
 
 
+def write_evidence(directory, name, text):
+    """Write a file under evidence/ and return (evidence_file, evidence_sha256)."""
+    path = directory / "evidence" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = text.encode("utf-8")
+    path.write_bytes(data)
+    return f"evidence/{name}", hashlib.sha256(data).hexdigest()
+
+
 def build_change(directory, phase="VALIDATE"):
     (directory / "task.md").write_text("Task\n", encoding="utf-8")
     fleet_state.init_state(directory, CHANGE_ID)
@@ -32,6 +42,7 @@ def build_change(directory, phase="VALIDATE"):
         },
     )
     write_json(directory, "implementation.json", {"change_id": CHANGE_ID, "files_changed": ["a.py"]})
+    evidence_file, evidence_sha256 = write_evidence(directory, "unit-tests.txt", "python -m unittest\nOK\n")
     write_json(
         directory,
         "review.json",
@@ -47,6 +58,8 @@ def build_change(directory, phase="VALIDATE"):
                     "status": "PASS",
                     "reviewer_reran": True,
                     "exit_code": 0,
+                    "evidence_file": evidence_file,
+                    "evidence_sha256": evidence_sha256,
                 }
             ],
             "criteria": [
@@ -77,6 +90,20 @@ class ValidateChangeTests(unittest.TestCase):
         change(data)
         path.write_text(json.dumps(data), encoding="utf-8")
         fleet_state.update_state(self.dir, None, None)
+
+    def set_regression_proof(self, adjust=None):
+        evidence_file, evidence_sha256 = write_evidence(self.dir, "regression-baseline.txt", "1 failed\n")
+        proof = {
+            "command": "python -m unittest",
+            "baseline_exit_code": 1,
+            "fixed_exit_code": 0,
+            "evidence_file": evidence_file,
+            "evidence_sha256": evidence_sha256,
+        }
+        if adjust is not None:
+            adjust(proof)
+        self.edit("contract.json", lambda data: data.update(behavior_change=True))
+        self.edit("review.json", lambda data: data.update(regression_proof=proof))
 
     def test_complete_change_passes(self):
         result = validate_change(self.dir)
@@ -202,6 +229,82 @@ class ValidateChangeTests(unittest.TestCase):
         state["repair_rounds"] = fleet_state.MAX_REPAIR_ROUNDS + 1
         fleet_state.write_state(self.dir, state)
         self.assertIn("GATE_FAILED", codes(validate_change(self.dir)))
+
+    def test_check_without_evidence_file_is_cannot_verify(self):
+        self.edit("review.json", lambda data: data["checks"][0].pop("evidence_file"))
+        self.assertIn("CANNOT_VERIFY", codes(validate_change(self.dir)))
+
+    def test_check_without_evidence_sha256_is_cannot_verify(self):
+        self.edit("review.json", lambda data: data["checks"][0].pop("evidence_sha256"))
+        self.assertIn("CANNOT_VERIFY", codes(validate_change(self.dir)))
+
+    def test_deleted_evidence_file_is_cannot_verify(self):
+        (self.dir / "evidence" / "unit-tests.txt").unlink()
+        fleet_state.update_state(self.dir, None, None)
+        self.assertIn("CANNOT_VERIFY", codes(validate_change(self.dir)))
+
+    def test_evidence_hash_mismatch_is_cannot_verify(self):
+        self.edit("review.json", lambda data: data["checks"][0].update(evidence_sha256="0" * 64))
+        self.assertIn("CANNOT_VERIFY", codes(validate_change(self.dir)))
+
+    def test_evidence_edited_after_state_update_is_gate_failed(self):
+        (self.dir / "evidence" / "unit-tests.txt").write_text("tampered\n", encoding="utf-8")
+        result = validate_change(self.dir)
+        self.assertIn("GATE_FAILED", codes(result))
+        self.assertTrue(any("changed after" in item["detail"] for item in result["blockers"]))
+
+    def test_evidence_path_escapes_are_cannot_verify(self):
+        outside = Path(self._temp.name) / "outside.txt"
+        outside.write_text("outside the change directory\n", encoding="utf-8")
+        cases = (
+            ("evidence/../../../outside.txt", outside),
+            (str(outside), outside),
+            ("task.md", self.dir / "task.md"),
+        )
+        for evidence_file, target in cases:
+            with self.subTest(evidence_file=evidence_file):
+                digest = hashlib.sha256(target.read_bytes()).hexdigest()
+                self.edit(
+                    "review.json",
+                    lambda data, name=evidence_file, sha=digest: data["checks"][0].update(
+                        evidence_file=name, evidence_sha256=sha
+                    ),
+                )
+                self.assertIn("CANNOT_VERIFY", codes(validate_change(self.dir)))
+
+    def test_behavior_change_without_regression_proof_is_cannot_verify(self):
+        self.edit("contract.json", lambda data: data.update(behavior_change=True))
+        self.assertIn("CANNOT_VERIFY", codes(validate_change(self.dir)))
+
+    def test_behavior_change_with_valid_regression_proof_passes(self):
+        self.set_regression_proof()
+        result = validate_change(self.dir)
+        self.assertEqual("PASS", result["verdict"], result["blockers"])
+
+    def test_malformed_regression_proof_is_cannot_verify(self):
+        cases = {
+            "baseline exit code 0": lambda proof: proof.update(baseline_exit_code=0),
+            "baseline exit code string": lambda proof: proof.update(baseline_exit_code="1"),
+            "baseline exit code boolean": lambda proof: proof.update(baseline_exit_code=True),
+            "baseline exit code missing": lambda proof: proof.pop("baseline_exit_code"),
+            "fixed exit code 1": lambda proof: proof.update(fixed_exit_code=1),
+            "fixed exit code string": lambda proof: proof.update(fixed_exit_code="0"),
+            "empty command": lambda proof: proof.update(command=" "),
+            "evidence hash mismatch": lambda proof: proof.update(evidence_sha256="0" * 64),
+        }
+        for label, adjust in cases.items():
+            with self.subTest(label):
+                self.set_regression_proof(adjust)
+                self.assertIn("CANNOT_VERIFY", codes(validate_change(self.dir)))
+
+    def test_non_boolean_behavior_change_is_gate_failed(self):
+        self.edit("contract.json", lambda data: data.update(behavior_change="yes"))
+        self.assertIn("GATE_FAILED", codes(validate_change(self.dir)))
+
+    def test_behavior_change_false_without_regression_proof_passes(self):
+        self.edit("contract.json", lambda data: data.update(behavior_change=False))
+        result = validate_change(self.dir)
+        self.assertEqual("PASS", result["verdict"], result["blockers"])
 
 
 class CommandLineTests(unittest.TestCase):

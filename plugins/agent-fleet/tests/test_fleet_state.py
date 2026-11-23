@@ -41,6 +41,29 @@ class FleetStateTests(unittest.TestCase):
         self.assertNotEqual(first, second)
         self.assertEqual("RESEARCH", fleet_state.read_state(self.dir)["phase"])
 
+    def test_evidence_files_are_hashed_under_relative_keys(self):
+        fleet_state.init_state(self.dir, "add-feature")
+        (self.dir / "evidence").mkdir()
+        (self.dir / "evidence" / "a.txt").write_text("one", encoding="utf-8")
+        artifacts = fleet_state.update_state(self.dir, None, None)["artifacts"]
+        self.assertIn("evidence/a.txt", artifacts)
+
+    def test_editing_evidence_file_changes_its_recorded_hash(self):
+        fleet_state.init_state(self.dir, "add-feature")
+        (self.dir / "evidence").mkdir()
+        (self.dir / "evidence" / "a.txt").write_text("one", encoding="utf-8")
+        first = fleet_state.update_state(self.dir, None, None)["artifacts"]["evidence/a.txt"]
+        (self.dir / "evidence" / "a.txt").write_text("two", encoding="utf-8")
+        second = fleet_state.update_state(self.dir, None, None)["artifacts"]["evidence/a.txt"]
+        self.assertNotEqual(first, second)
+
+    def test_nested_evidence_files_are_hashed(self):
+        fleet_state.init_state(self.dir, "add-feature")
+        (self.dir / "evidence" / "sub").mkdir(parents=True)
+        (self.dir / "evidence" / "sub" / "x.txt").write_text("nested", encoding="utf-8")
+        artifacts = fleet_state.update_state(self.dir, None, None)["artifacts"]
+        self.assertIn("evidence/sub/x.txt", artifacts)
+
     def test_update_rejects_unknown_values(self):
         fleet_state.init_state(self.dir, "add-feature")
         with self.assertRaises(ValueError):

@@ -10,8 +10,8 @@ python scripts/validate_run.py work/<change-id>
 python scripts/validate_suite.py suite-report.json --baseline earlier-suite-report.json
 ```
 
-- `fleet_state.py` writes `state.json`: phase, status, repair rounds, blocker history, and a SHA-256 for each saved artifact. `update` always refreshes the hashes. `repair` counts a repair round and exits 3 when the two-round limit is reached or the same blockers repeat.
-- `validate_run.py` is the per-change gate. It checks that artifacts parse and agree on the change id, every contract criterion has reviewer evidence, the reviewer independently reran every contract check, no blockers remain, the run is in the `VALIDATE` or `DONE` phase with a passing status, and no artifact changed after its hash was recorded. Exit codes: 0 pass, 1 fail, 2 missing directory.
+- `fleet_state.py` writes `state.json`: phase, status, repair rounds, blocker history, and a SHA-256 for each saved artifact and each file under `evidence/`. `update` always refreshes the hashes. `repair` counts a repair round and exits 3 when the two-round limit is reached or the same blockers repeat.
+- `validate_run.py` is the per-change gate. It checks that artifacts parse and agree on the change id, every contract criterion has reviewer evidence, the reviewer independently reran every contract check, no blockers remain, the run is in the `VALIDATE` or `DONE` phase with a passing status, no artifact changed after its hash was recorded, and every check's `evidence_file` lies inside `evidence/` and matches `evidence_sha256`. When the contract sets `behavior_change: true`, review.json also needs a valid `regression_proof` (non-zero baseline exit code, fixed exit code 0, verified evidence). Exit codes: 0 pass, 1 fail, 2 missing directory.
 - `validate_suite.py` validates a behavior-probe suite report. See `quality/README.md`.
 
 None of these prove that a command ran or grade an agent; the reviewer must provide real evidence.
