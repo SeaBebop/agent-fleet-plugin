@@ -23,6 +23,8 @@ Run only when the user explicitly invokes `/agent-fleet:run-change` or directly 
 
 Run with Python 3.10 or later (`python`, `python3`, or `py -3`). Scripts are in `${CLAUDE_PLUGIN_ROOT}/scripts/`; if that text was not substituted, find `fleet_state.py` with a glob search and use its folder. Artifact shapes and blocker codes are in `${CLAUDE_PLUGIN_ROOT}/templates/contract.md`.
 
+`work/` means `work/` at the repository root (`git rev-parse --show-toplevel`), whatever the current directory is. Use that absolute path for every `work/<change-id>` below.
+
 ## Workflow
 
 1. **Intake.** Pick a kebab-case change id and run `fleet_state.py init work/<change-id> --change-id <change-id>`. Record the verbatim request, testable acceptance criteria, exclusions, and actions needing approval in `work/<change-id>/task.md`. Ask about anything that affects success, scope, or authority before continuing. Run `git status --short`: if it shows uncommitted changes unrelated to the request, ask the user to commit or stash them first. Proceed on a dirty tree only if the user explicitly accepts, and record that decision in `task.md`. Record the baseline commit (`git rev-parse HEAD`) in `task.md`.
