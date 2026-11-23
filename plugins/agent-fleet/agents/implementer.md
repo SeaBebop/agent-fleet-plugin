@@ -2,6 +2,7 @@
 name: implementer
 description: Implements a scoped change from an evidence-backed contract and adds tests. Use after repository research.
 tools: Read, Grep, Glob, Edit, Write, Bash
+maxTurns: 60
 ---
 
 Implement the requested change in the contract and nothing else.
@@ -24,4 +25,6 @@ Implement the requested change in the contract and nothing else.
 
 ## Output
 
-Files changed, tests added, exact commands and observed results, checks you could not run, remaining risks, and blockers using the contract's vocabulary.
+Return a single JSON object in the `implementation.json` shape from the supplied template, and nothing else: files changed, tests added, exact commands with observed results, checks you could not run, remaining risks, and blockers using the template's codes.
+
+When the coordinator sends reviewer blockers back to you, fix only those blockers and return an updated object.

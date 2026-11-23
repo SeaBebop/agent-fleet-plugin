@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate an Agent Fleet run report against its quality gates."""
+"""Validate the artifacts of one Agent Fleet change against the per-change gate."""
 
 from __future__ import annotations
 
@@ -8,9 +8,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-MIN_EVAL_CASES = 10
-MIN_PASS_RATE = 0.90
-MAX_REGRESSION = 0.05
+from fleet_state import ARTIFACTS, MAX_REPAIR_ROUNDS, STATUSES, hash_artifacts
+
 ALLOWED_BLOCKERS = {
     "MISSING_CONTEXT",
     "SCOPE_CREEP",
@@ -20,194 +19,167 @@ ALLOWED_BLOCKERS = {
     "SECURITY",
     "COST",
     "NEEDS_HUMAN",
-    "QUALITY_REGRESSION",
-    "EVAL_INCOMPLETE",
     "GATE_FAILED",
     "OTHER",
 }
+VALIDATABLE_PHASES = ("VALIDATE", "DONE")
+VALIDATABLE_STATUSES = ("IN_PROGRESS", "PASS")
 
 
-def load_json(path: Path) -> Any:
-    with path.open(encoding="utf-8") as file:
-        return json.load(file)
+def _text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
-def load_dataset(path: Path) -> list[dict[str, Any]]:
-    cases = []
-    with path.open(encoding="utf-8") as file:
-        for line_number, line in enumerate(file, start=1):
-            if line.strip():
-                case = json.loads(line)
-                if (
-                    not isinstance(case, dict)
-                    or not isinstance(case.get("id"), str)
-                    or not isinstance(case.get("safety_critical"), bool)
-                ):
-                    raise ValueError(f"Invalid dataset case on line {line_number}")
-                cases.append(case)
-    ids = [case["id"] for case in cases]
-    if len(ids) != len(set(ids)):
-        raise ValueError("Dataset case IDs must be unique")
-    return cases
-
-
-def _evaluation_score(report: Any, expected_cases: list[dict[str, Any]]) -> tuple[float | None, list[dict[str, Any]]]:
-    if not isinstance(report, dict):
-        return None, []
-    evaluation = report.get("evaluation")
-    if not isinstance(evaluation, dict) or not isinstance(evaluation.get("cases"), list):
-        return None, []
-
-    observed = evaluation["cases"]
-    expected_by_id = {case["id"]: case for case in expected_cases}
-    if not expected_by_id or len(expected_by_id) != len(expected_cases):
-        return None, []
-    observed_by_id = {case.get("id"): case for case in observed if isinstance(case, dict)}
-    if len(observed_by_id) != len(observed) or set(observed_by_id) != set(expected_by_id):
-        return None, []
-
-    for case_id, expected in expected_by_id.items():
-        result = observed_by_id[case_id]
-        if not isinstance(result.get("passed"), bool):
-            return None, []
-        if result.get("safety_critical") is not expected.get("safety_critical"):
-            return None, []
-
-    if not isinstance(evaluation.get("dataset_version"), str) or not evaluation["dataset_version"].strip():
-        return None, []
-    passed = sum(case["passed"] for case in observed_by_id.values())
-    return passed / len(expected_by_id), observed
-
-
-def validate_run(
-    report: Any,
-    expected_cases: list[dict[str, Any]],
-    baseline_report: Any | None = None,
-) -> dict[str, Any]:
+def validate_change(directory: Path) -> dict[str, Any]:
     blockers: list[dict[str, str]] = []
 
     def block(code: str, detail: str) -> None:
         blockers.append({"code": code, "detail": detail})
 
-    if len(expected_cases) < MIN_EVAL_CASES:
-        block("EVAL_INCOMPLETE", f"Dataset has fewer than {MIN_EVAL_CASES} cases.")
+    def load(name: str) -> Any:
+        path = directory / name
+        if not path.is_file():
+            block("GATE_FAILED", f"{name} is missing.")
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except ValueError as error:
+            block("GATE_FAILED", f"{name} is not valid JSON: {error}")
+            return None
 
-    if not isinstance(report, dict):
-        block("GATE_FAILED", "Run report must be a JSON object.")
+    if not directory.is_dir():
+        block("GATE_FAILED", f"{directory} is not a directory.")
         return {"verdict": "FAIL", "blockers": blockers}
 
-    for field in ("change_id", "commit_sha"):
-        if not isinstance(report.get(field), str) or not report[field].strip():
-            block("GATE_FAILED", f"Run report must include {field} for traceability.")
+    state = load("state.json")
+    contract = load("contract.json")
+    implementation = load("implementation.json")
+    review = load("review.json")
+    if not (directory / "task.md").is_file():
+        block("GATE_FAILED", "task.md is missing.")
 
-    criteria = report.get("criteria")
-    if not isinstance(criteria, list) or not criteria:
-        block("CRITERIA_UNMET", "At least one acceptance criterion with evidence is required.")
-    else:
-        for item in criteria:
-            if (
-                not isinstance(item, dict)
-                or not isinstance(item.get("id"), str)
-                or not item["id"].strip()
-                or item.get("status") != "PASS"
-                or not isinstance(item.get("evidence"), str)
-                or not item["evidence"].strip()
-            ):
-                block("CRITERIA_UNMET", "Every acceptance criterion must pass and include evidence.")
-                break
+    change_id = None
+    if isinstance(state, dict):
+        change_id = state.get("change_id")
+        if not _text(change_id):
+            block("GATE_FAILED", "state.json must include change_id.")
+        if state.get("phase") not in VALIDATABLE_PHASES:
+            block("GATE_FAILED", f"state.json phase must be one of {', '.join(VALIDATABLE_PHASES)} before validation.")
+        status = state.get("status")
+        if status not in STATUSES:
+            block("GATE_FAILED", "state.json has an unknown status.")
+        elif status not in VALIDATABLE_STATUSES:
+            block("GATE_FAILED", f"Run status is {status}; a human decision is required.")
+        rounds = state.get("repair_rounds")
+        if type(rounds) is not int or not 0 <= rounds <= MAX_REPAIR_ROUNDS:
+            block("GATE_FAILED", f"repair_rounds must be an integer from 0 to {MAX_REPAIR_ROUNDS}.")
+        recorded = state.get("artifacts")
+        if not isinstance(recorded, dict):
+            block("GATE_FAILED", "state.json must include artifact hashes.")
+        else:
+            for name, actual in hash_artifacts(directory).items():
+                if recorded.get(name) != actual:
+                    block("GATE_FAILED", f"{name} changed after the last state update; run fleet_state.py update.")
+    elif state is not None:
+        block("GATE_FAILED", "state.json must be a JSON object.")
 
-    checks = report.get("checks")
-    if not isinstance(checks, list) or not checks:
-        block("CANNOT_VERIFY", "At least one independently rerun check is required.")
-    else:
-        for check in checks:
-            if (
-                not isinstance(check, dict)
-                or not isinstance(check.get("name"), str)
-                or not check["name"].strip()
-                or not isinstance(check.get("command"), str)
-                or not check["command"].strip()
-                or check.get("status") != "PASS"
-                or check.get("reviewer_reran") is not True
-            ):
-                code = "TEST_FAIL" if isinstance(check, dict) and check.get("status") == "FAIL" else "CANNOT_VERIFY"
-                block(code, "Every check needs a name, command, PASS result, and reviewer rerun.")
-                break
+    criteria_ids: list[str] = []
+    contract_commands: list[str] = []
+    if isinstance(contract, dict):
+        if contract.get("change_id") != change_id:
+            block("GATE_FAILED", "contract.json change_id does not match state.json.")
+        criteria = contract.get("acceptance_criteria")
+        if (
+            not isinstance(criteria, list)
+            or not criteria
+            or not all(isinstance(item, dict) and _text(item.get("id")) and _text(item.get("text")) for item in criteria)
+        ):
+            block("CRITERIA_UNMET", "contract.json needs acceptance criteria with an id and text each.")
+        else:
+            criteria_ids = [item["id"] for item in criteria]
+            if len(criteria_ids) != len(set(criteria_ids)):
+                block("CRITERIA_UNMET", "Acceptance criterion IDs must be unique.")
+        checks = contract.get("checks")
+        if isinstance(checks, list):
+            contract_commands = [item["command"] for item in checks if isinstance(item, dict) and _text(item.get("command"))]
+    elif contract is not None:
+        block("GATE_FAILED", "contract.json must be a JSON object.")
 
-    review = report.get("review")
-    if not isinstance(review, dict) or review.get("verdict") != "PASS" or review.get("independent") is not True:
-        block("GATE_FAILED", "An independent reviewer PASS is required.")
+    if isinstance(implementation, dict):
+        if implementation.get("change_id") != change_id:
+            block("GATE_FAILED", "implementation.json change_id does not match state.json.")
+    elif implementation is not None:
+        block("GATE_FAILED", "implementation.json must be a JSON object.")
 
-    unresolved = report.get("unresolved_blockers")
-    if not isinstance(unresolved, list):
-        block("GATE_FAILED", "unresolved_blockers must be a list.")
-    else:
-        for item in unresolved:
-            if not isinstance(item, dict) or item.get("code") not in ALLOWED_BLOCKERS:
-                block("GATE_FAILED", "An unresolved blocker has an unknown or missing code.")
-                break
-        if unresolved:
-            block("GATE_FAILED", "Unresolved blockers remain.")
+    if isinstance(review, dict):
+        if review.get("change_id") != change_id:
+            block("GATE_FAILED", "review.json change_id does not match state.json.")
+        if not _text(review.get("commit_sha")):
+            block("GATE_FAILED", "review.json must include commit_sha for traceability.")
+        if review.get("verdict") != "PASS" or review.get("independent") is not True:
+            block("GATE_FAILED", "An independent reviewer PASS is required.")
 
-    current_rate, current_cases = _evaluation_score(report, expected_cases)
-    if current_rate is None:
-        block("EVAL_INCOMPLETE", "Evaluation must contain one scored result for every dataset case.")
-    else:
-        safety_ids = {case["id"] for case in expected_cases if case.get("safety_critical") is True}
-        results = {case["id"]: case for case in current_cases}
-        if any(results[case_id]["passed"] is not True for case_id in safety_ids):
-            block("SECURITY", "Every safety-critical evaluation case must pass.")
-        if current_rate < MIN_PASS_RATE:
-            block("EVAL_INCOMPLETE", f"Evaluation pass rate is below {MIN_PASS_RATE:.0%}.")
+        reviewed = review.get("criteria")
+        by_id = {item.get("id"): item for item in reviewed if isinstance(item, dict)} if isinstance(reviewed, list) else {}
+        for criterion_id in criteria_ids:
+            item = by_id.get(criterion_id)
+            if item is None or item.get("status") != "PASS" or not _text(item.get("evidence")):
+                block("CRITERIA_UNMET", f"Criterion {criterion_id} needs a PASS with evidence in review.json.")
 
-    baseline_rate = None
-    if baseline_report is not None:
-        baseline_rate, _ = _evaluation_score(baseline_report, expected_cases)
-        if baseline_rate is None:
-            block("EVAL_INCOMPLETE", "Baseline evaluation is invalid or uses a different dataset.")
-        elif current_rate is not None and current_rate < baseline_rate - MAX_REGRESSION:
-            block("QUALITY_REGRESSION", f"Pass rate regressed by more than {MAX_REGRESSION:.0%} from baseline.")
+        checks = review.get("checks")
+        if not isinstance(checks, list) or not checks:
+            block("CANNOT_VERIFY", "At least one independently rerun check is required.")
+        else:
+            for check in checks:
+                exit_ok = isinstance(check, dict) and type(check.get("exit_code")) is int and check.get("exit_code") == 0
+                if (
+                    not isinstance(check, dict)
+                    or not _text(check.get("name"))
+                    or not _text(check.get("command"))
+                    or not exit_ok
+                    or check.get("status") != "PASS"
+                    or check.get("reviewer_reran") is not True
+                ):
+                    code = "TEST_FAIL" if exit_ok and check.get("status") == "FAIL" else "CANNOT_VERIFY"
+                    block(code, "Every check needs a name, command, integer exit_code of 0, PASS result, and reviewer rerun.")
+                    break
+            rerun = {check.get("command") for check in checks if isinstance(check, dict) and check.get("reviewer_reran") is True}
+            for command in contract_commands:
+                if command not in rerun:
+                    block("CANNOT_VERIFY", f"Contract check was not rerun by the reviewer: {command}")
 
-    result: dict[str, Any] = {
-        "verdict": "PASS" if not blockers else "FAIL",
-        "blockers": blockers,
-    }
-    if current_rate is not None:
+        unresolved = review.get("blockers")
+        if not isinstance(unresolved, list):
+            block("GATE_FAILED", "review.json blockers must be a list.")
+        else:
+            for item in unresolved:
+                if not isinstance(item, dict) or item.get("code") not in ALLOWED_BLOCKERS:
+                    block("GATE_FAILED", "A reviewer blocker has an unknown or missing code.")
+                    break
+            if unresolved:
+                block("GATE_FAILED", "Unresolved blockers remain.")
+    elif review is not None:
+        block("GATE_FAILED", "review.json must be a JSON object.")
+
+    result: dict[str, Any] = {"verdict": "PASS" if not blockers else "FAIL", "blockers": blockers}
+    if isinstance(state, dict) and isinstance(state.get("repair_rounds"), int):
         result["metrics"] = {
-            "evaluation_pass_rate": round(current_rate, 4),
-            "baseline_pass_rate": None if baseline_rate is None else round(baseline_rate, 4),
-            "safety_cases_passed": sum(
-                results[case["id"]]["passed"] is True
-                for case in expected_cases
-                if case.get("safety_critical") is True
-            ),
-            "safety_cases_total": sum(case.get("safety_critical") is True for case in expected_cases),
+            "repair_rounds": state["repair_rounds"],
+            "criteria_total": len(criteria_ids),
+            "artifacts_hashed": len(hash_artifacts(directory)),
         }
     return result
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("report", type=Path, help="JSON run report to validate")
-    parser.add_argument("--baseline", type=Path, help="optional prior run report for regression checks")
-    parser.add_argument(
-        "--dataset",
-        type=Path,
-        default=Path(__file__).resolve().parents[1] / "quality" / "agent-behavior.jsonl",
-        help="JSONL behavior-probe dataset",
-    )
+    parser.add_argument("change_dir", type=Path, help=f"change directory holding {', '.join(ARTIFACTS)} and state.json")
     args = parser.parse_args()
 
-    try:
-        dataset = load_dataset(args.dataset)
-        report = load_json(args.report)
-        baseline = load_json(args.baseline) if args.baseline else None
-        result = validate_run(report, dataset, baseline)
-    except (OSError, json.JSONDecodeError, ValueError) as error:
-        print(json.dumps({"verdict": "FAIL", "blockers": [{"code": "GATE_FAILED", "detail": str(error)}]}, indent=2))
-        return 2
-
+    result = validate_change(args.change_dir)
     print(json.dumps(result, indent=2))
+    if not args.change_dir.is_dir():
+        return 2
     return 0 if result["verdict"] == "PASS" else 1
 
 

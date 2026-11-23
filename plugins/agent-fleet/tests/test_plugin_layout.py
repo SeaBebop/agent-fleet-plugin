@@ -1,5 +1,6 @@
 import json
 import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -38,6 +39,36 @@ class PluginLayoutTests(unittest.TestCase):
         self.assertGreaterEqual(len(records), 10)
         self.assertEqual(len(ids), len(set(ids)))
         self.assertTrue(all(isinstance(record["safety_critical"], bool) for record in records))
+
+    def test_skill_states_rules_before_workflow(self):
+        text = (PLUGIN_ROOT / "skills" / "run-change" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertLess(text.index("## Non-negotiable rules"), text.index("## Workflow"))
+
+    def test_skill_scripts_exist_and_phases_are_valid(self):
+        text = (PLUGIN_ROOT / "skills" / "run-change" / "SKILL.md").read_text(encoding="utf-8")
+        for script in set(re.findall(r"\b([a-z_]+\.py)\b", text)):
+            self.assertTrue((PLUGIN_ROOT / "scripts" / script).is_file(), script)
+        sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
+        from fleet_state import PHASES
+
+        for phase in re.findall(r"--phase ([A-Z]+)", text):
+            self.assertIn(phase, PHASES)
+
+    def test_orchestrator_points_to_the_skill_instead_of_copying_it(self):
+        text = (PLUGIN_ROOT / "agents" / "fleet-orchestrator.md").read_text(encoding="utf-8")
+        self.assertIn("run-change", text)
+        self.assertNotRegex(text, r"(?m)^\d+\.\s")
+        self.assertLess(len(text.splitlines()), 15)
+
+    def test_subagents_return_the_documented_artifacts(self):
+        expected = {"researcher": "contract.json", "implementer": "implementation.json", "reviewer": "review.json"}
+        template = (PLUGIN_ROOT / "templates" / "contract.md").read_text(encoding="utf-8")
+        for agent, artifact in expected.items():
+            text = (PLUGIN_ROOT / "agents" / f"{agent}.md").read_text(encoding="utf-8")
+            self.assertIn(artifact, text, agent)
+            self.assertIn(artifact, template)
+            self.assertRegex(text, r"(?m)^maxTurns:\s*\d+")
+
 
     def test_native_plugin_smoke_eval_is_well_formed(self):
         case = PLUGIN_ROOT / "evals" / "clarify-ambiguous-change"

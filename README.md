@@ -4,7 +4,7 @@ A Claude Code plugin for evidence-backed software changes. Agent Fleet provides 
 
 ## Status
 
-Version `0.1.0` packages the existing fleet template as a Claude Code plugin. It includes a report validator, a versioned set of ten behavior probes, unit tests, and GitHub Actions CI. This version does not install hooks, start MCP servers, deploy infrastructure, or claim measured model-evaluation results.
+Version `0.1.0` packages the existing fleet template as a Claude Code plugin. It includes a per-change gate and state helper, a separate opt-in suite of ten behavior probes, unit tests, and GitHub Actions CI. This version does not install hooks, start MCP servers, deploy infrastructure, or claim measured model-evaluation results.
 
 ## Local Development
 
@@ -20,7 +20,7 @@ claude plugin validate . --strict
 claude --plugin-dir ./plugins/agent-fleet
 ```
 
-In Claude Code, invoke `/agent-fleet:run-change`. The skill coordinates the workflow; the specialized agents are also available for direct delegation.
+In Claude Code, invoke `/agent-fleet:run-change`. The skill is the single workflow definition and runs in your own session; the specialized agents are also available for direct delegation. For a stricter mode where the coordinator has no edit tool, run `fleet-orchestrator` as the main agent (for example `claude --agent agent-fleet:fleet-orchestrator`); it reads and follows the same skill.
 
 In VS Code, choose the GitHub Copilot harness, open Agent Customizations, and install the plugin from the local folder `plugins/agent-fleet` while developing. For a published repository, use the repository's marketplace source. Start with a low-risk task and inspect the agent's available tools and actions: a compatible Claude manifest does not mean every Claude tool or workflow feature behaves identically in Copilot.
 
@@ -34,20 +34,20 @@ After installing, confirm the plugin is listed and enabled, start a new Copilot 
 
 `claude plugin validate .` checks the marketplace catalog. Validate the plugin directory separately as shown above; the commands have different targets.
 
-The report gate can be run from any consumer repository:
+The per-change gate and state helper can be run from any consumer repository:
 
 ```powershell
-python "<path-to-plugin>/scripts/validate_run.py" work/<change-id>/run-report.json
-python "<path-to-plugin>/scripts/validate_run.py" work/<change-id>/run-report.json --baseline work/<baseline-change>/run-report.json
+python "<path-to-plugin>/scripts/fleet_state.py" init work/<change-id> --change-id <change-id>
+python "<path-to-plugin>/scripts/validate_run.py" work/<change-id>
 ```
 
-The validator requires evidence for each acceptance criterion, reviewer-rerun checks, an independent review verdict, no unresolved blockers, a result for each case in `quality/agent-behavior.jsonl`, a 90% overall pass rate, and a 100% pass rate on safety-critical cases. A supplied baseline may not regress by more than five percentage points.
+The gate requires each contract criterion to have reviewer evidence, every contract check to be rerun by an independent reviewer, no unresolved blockers, at most two repair rounds, and unchanged artifact hashes. Behavior probes are a separate opt-in suite (`plugins/agent-fleet/quality/README.md`), validated with `validate_suite.py`.
 
-The validator checks report structure and reported scores. It does not execute agents, independently verify command output, or score model behavior. Reviewers must record genuine evidence. Use the same dataset version when comparing a baseline.
+The validator checks structure, consistency, and hashes. It does not execute agents, independently verify command output, or score model behavior. Reviewers must record genuine evidence.
 
 ## Evaluation Costs
 
-The JSONL behavior probes are included in offline report validation. Claude Code's native `claude plugin eval` suite is separate and makes real model calls that count against your plan or API bill. It is not run by GitHub Actions in this first version. Add model-backed eval cases and CI credentials only after choosing a budget and deciding which checks justify the cost.
+The JSONL behavior probes belong to a separate opt-in suite and are not part of the per-change gate. Claude Code's native `claude plugin eval` suite is also separate and makes real model calls that count against your plan or API bill. It is not run by GitHub Actions in this first version. Add model-backed eval cases and CI credentials only after choosing a budget and deciding which checks justify the cost.
 
 ## Install After Publishing
 

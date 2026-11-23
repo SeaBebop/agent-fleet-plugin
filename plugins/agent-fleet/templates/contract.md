@@ -1,23 +1,70 @@
-# Change Contract
+# Change Artifacts
 
-## Task
+Each change lives in `work/<change-id>/`. Subagents return one JSON object; the coordinator saves it verbatim. After saving any artifact, run `fleet_state.py update` so its hash is recorded; the validator rejects artifacts edited after that.
 
-```yaml
-change_id: <short-slug>
-from_task:
-  goal: <copy the user's request; do not reinterpret>
-  acceptance_criteria: []
-  out_of_scope: []
-  approvals_required: []
-from_research:
-  relevant_files: []
-  conventions: []
-  risks: []
-  checks: []
-  unverified: []
+## contract.json (researcher)
+
+```json
+{
+  "change_id": "short-slug",
+  "goal": "the user's request, not reinterpreted",
+  "acceptance_criteria": [{"id": "AC-1", "text": "testable criterion"}],
+  "out_of_scope": [],
+  "approvals_required": [],
+  "relevant_files": [],
+  "conventions": [],
+  "risks": [],
+  "checks": [{"name": "unit tests", "command": "python -m unittest"}],
+  "unverified": []
+}
 ```
 
-Every research finding needs a repository path or command-output reference. Mark anything not verified as `UNVERIFIED`.
+Every finding needs a repository path or command-output reference. Mark anything not verified as `UNVERIFIED`. Paths are relative to the repository root.
+
+## implementation.json (implementer)
+
+```json
+{
+  "change_id": "short-slug",
+  "files_changed": [],
+  "tests_added": [],
+  "commands": [{"command": "python -m unittest", "observed_result": "OK, 12 tests"}],
+  "not_run": [],
+  "risks": [],
+  "blockers": [{"code": "CANNOT_VERIFY", "detail": "why"}]
+}
+```
+
+## review.json (reviewer)
+
+```json
+{
+  "change_id": "short-slug",
+  "commit_sha": "commit-or-working-tree-reference",
+  "verdict": "PASS",
+  "independent": true,
+  "checks": [
+    {"name": "unit tests", "command": "python -m unittest", "status": "PASS", "reviewer_reran": true, "exit_code": 0}
+  ],
+  "criteria": [
+    {"id": "AC-1", "status": "PASS", "evidence": "tests/test_file.py::test_case"}
+  ],
+  "blockers": []
+}
+```
+
+Include a check entry for every command in `contract.json` `checks`. `exit_code` is the integer process exit status observed when the reviewer reran the command; it is required on every check, and a missing or non-zero value is a `CANNOT_VERIFY`. Use `status` `PASS`, `FAIL`, or `CANNOT_VERIFY`. A FAIL verdict lists blockers with the codes below. Redact secrets and personal data from evidence.
+
+## state.json (fleet_state.py)
+
+Written by `scripts/fleet_state.py`, not by hand: `change_id`, `phase`, `status`, `repair_rounds`, `blocker_history`, and `artifacts` (SHA-256 of each saved artifact).
+
+| Field | Values |
+|---|---|
+| `phase` | `INTAKE`, `RESEARCH`, `IMPLEMENT`, `REVIEW`, `VALIDATE`, `DONE` |
+| `status` | `IN_PROGRESS`, `PASS`, `FAIL`, `PARTIAL` (subagent hit its turn limit), `ERROR` (subagent or tool failure), `TIMEOUT` |
+
+At most two repair rounds are allowed, and the same blockers repeating stops the loop. `fleet_state.py repair` enforces both and exits 3 when a human must decide.
 
 ## Blocker Codes
 
@@ -31,34 +78,9 @@ Every research finding needs a repository path or command-output reference. Mark
 | `SECURITY` | A security or privacy risk blocks approval. |
 | `COST` | Unbounded or always-on cost was introduced. |
 | `NEEDS_HUMAN` | A decision or action requires human authority. |
-| `QUALITY_REGRESSION` | Evaluation regressed beyond the allowed tolerance. |
-| `EVAL_INCOMPLETE` | Evaluation data is missing, malformed, or below threshold. |
-| `GATE_FAILED` | A required quality gate did not pass. |
+| `GATE_FAILED` | A required gate did not pass. |
 | `OTHER` | No code fits; explain why. |
 
-## Completion Report
+The behavior-probe suite uses two more codes, `QUALITY_REGRESSION` and `EVAL_INCOMPLETE`; see `quality/README.md`.
 
-Write `work/<change-id>/run-report.json` with this shape:
-
-```json
-{
-  "change_id": "short-slug",
-  "commit_sha": "commit-or-working-tree-reference",
-  "criteria": [
-    {"id": "AC-1", "status": "PASS", "evidence": "tests/test_file.py::test_case"}
-  ],
-  "checks": [
-    {"name": "unit tests", "command": "python -m unittest", "status": "PASS", "reviewer_reran": true}
-  ],
-  "review": {"verdict": "PASS", "independent": true},
-  "unresolved_blockers": [],
-  "evaluation": {
-    "dataset_version": "1.0.0",
-    "cases": [
-      {"id": "case-id", "passed": true, "safety_critical": false}
-    ]
-  }
-}
-```
-
-Include exactly one scored result for each case in `quality/agent-behavior.jsonl`. Redact secrets and personal data from evidence. The report validator verifies report shape and thresholds; it does not independently verify the truth of submitted outcomes.
+The validator checks structure, consistency, and hashes. It does not prove that commands ran or that the reviewer is honest.

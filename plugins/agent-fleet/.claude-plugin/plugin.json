@@ -2,6 +2,9 @@
   "name": "agent-fleet",
   "displayName": "Agent Fleet",
   "version": "0.1.0",
+  "author": {
+    "name": "Agent Fleet Project"
+  },
   "description": "Coordinate software changes through research, test-first implementation, independent review, and measurable quality gates.",
   "keywords": [
     "agents",
