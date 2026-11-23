@@ -4,7 +4,9 @@ A Claude Code plugin for evidence-backed software changes. Agent Fleet provides 
 
 ## Status
 
-Version `0.1.0` packages the existing fleet template as a Claude Code plugin. It includes a per-change gate and state helper, a separate opt-in suite of ten behavior probes, unit tests, and GitHub Actions CI. This version does not install hooks, start MCP servers, deploy infrastructure, or claim measured model-evaluation results.
+Version `0.2.0` packages the fleet as a Claude Code plugin. It includes a per-change gate, a state helper that enforces phases and the repair cap, hashed reviewer evidence with a fail-before / pass-after proof for behavior changes, a separate opt-in suite of ten behavior probes, unit tests, and GitHub Actions CI. This version does not install hooks, start MCP servers, deploy infrastructure, or claim measured model-evaluation results.
+
+The workflow has been exercised in Claude Code on Windows through three fleet runs of small changes to this repository. It has not been verified in the Copilot harness. See Harness Compatibility.
 
 ## Local Development
 
@@ -44,6 +46,55 @@ python "<path-to-plugin>/scripts/validate_run.py" work/<change-id>
 The gate requires each contract criterion to have reviewer evidence, every contract check to be rerun by an independent reviewer, no unresolved blockers, at most two repair rounds, and unchanged artifact hashes. Behavior probes are a separate opt-in suite (`plugins/agent-fleet/quality/README.md`), validated with `validate_suite.py`.
 
 The validator checks structure, consistency, and hashes. It does not execute agents, independently verify command output, or score model behavior. Reviewers must record genuine evidence.
+
+## Using the Workflow
+
+Start the message with `/agent-fleet:run-change` as its very first characters, followed by the task and its acceptance criteria. The skill only runs when the name is at the start of the message; a plain prompt, or a name after other text, does not run it and the session does the work itself. Confirm the fleet is running: within its first actions the coordinator creates `work/<change-id>/state.json` at the repository root. Commit or stash unrelated changes first so the reviewer's diff covers only the change.
+
+The fleet costs more time and tokens than a direct edit, so it is not worth it for trivial changes. Its value is the independent review, the gates, and the audit trail.
+
+## Recommended Permission Rules
+
+Agent instructions and tool lists guide behavior; they are not a security boundary. Block risky commands with permission rules, which Claude Code applies to the main session and to subagents. In a consuming repository's `.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push *)",
+      "Bash(terraform apply *)",
+      "Bash(terraform destroy *)",
+      "Bash(rm -rf *)"
+    ]
+  }
+}
+```
+
+These rules match command patterns and are not exhaustive; a shell offers many ways to run the same action. On Windows, add equivalents for the PowerShell tool after checking the Claude Code permissions documentation for the syntax. For the Copilot harness, keep terminal commands set to require approval and read each prompt. A deny-list setting for that harness has not been verified here.
+
+## Harness Compatibility
+
+The agents list Claude Code tool names. VS Code documents lowercase aliases for the Copilot harness:
+
+| Claude Code | Copilot alias |
+|---|---|
+| `Read` | `read` |
+| `Grep`, `Glob` | `search` |
+| `Edit`, `Write` | `edit` |
+| `Bash` | `execute` |
+| `Agent` | `agent` |
+
+Whether the Copilot harness translates Claude names in plugin agents, and whether it ignores the Claude-only fields `maxTurns` and `disallowed-tools`, is untested. The skill locates the scripts by glob search if `${CLAUDE_PLUGIN_ROOT}` is not substituted.
+
+Smoke test in each harness with a small change:
+
+1. The plugin is listed and enabled, and `/agent-fleet:run-change` appears.
+2. The coordinator creates `work/<change-id>/state.json` at the repository root and records the baseline commit.
+3. The researcher (for changes beyond one or two files), implementer, and reviewer are launched, one at a time, with the intended tools.
+4. The coordinator never edits source files itself.
+5. The reviewer saves files under `evidence/`, and `validate_run.py` prints PASS.
+
+Results so far: Claude Code 2.1.330 on Windows passes all five. Copilot: not yet verified.
 
 ## Evaluation Costs
 

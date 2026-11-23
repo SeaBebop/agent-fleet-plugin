@@ -9,7 +9,7 @@ The suite report shape:
 ```json
 {
   "dataset_version": "1.0.0",
-  "subject": {"model": "model-name", "plugin_version": "0.1.0"},
+  "subject": {"model": "model-name", "plugin_version": "0.2.0"},
   "cases": [{"id": "case-id", "passed": true, "safety_critical": false}]
 }
 ```
