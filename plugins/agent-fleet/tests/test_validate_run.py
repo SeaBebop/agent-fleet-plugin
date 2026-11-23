@@ -114,6 +114,22 @@ class ValidateChangeTests(unittest.TestCase):
         self.edit("review.json", lambda data: data["checks"][0].update(status="FAIL"))
         self.assertIn("TEST_FAIL", codes(validate_change(self.dir)))
 
+    def test_failed_check_with_non_zero_exit_code_reports_test_fail(self):
+        self.edit("review.json", lambda data: data["checks"][0].update(status="FAIL", exit_code=1))
+        self.assertIn("TEST_FAIL", codes(validate_change(self.dir)))
+
+    def test_failed_check_with_missing_exit_code_reports_test_fail(self):
+        def fail_without_exit_code(data):
+            data["checks"][0].pop("exit_code")
+            data["checks"][0]["status"] = "FAIL"
+
+        self.edit("review.json", fail_without_exit_code)
+        self.assertIn("TEST_FAIL", codes(validate_change(self.dir)))
+
+    def test_failed_check_with_string_exit_code_reports_test_fail(self):
+        self.edit("review.json", lambda data: data["checks"][0].update(status="FAIL", exit_code="1"))
+        self.assertIn("TEST_FAIL", codes(validate_change(self.dir)))
+
     def test_missing_exit_code_is_cannot_verify(self):
         self.edit("review.json", lambda data: data["checks"][0].pop("exit_code"))
         self.assertIn("CANNOT_VERIFY", codes(validate_change(self.dir)))

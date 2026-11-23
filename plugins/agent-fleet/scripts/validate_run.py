@@ -140,7 +140,7 @@ def validate_change(directory: Path) -> dict[str, Any]:
                     or check.get("status") != "PASS"
                     or check.get("reviewer_reran") is not True
                 ):
-                    code = "TEST_FAIL" if exit_ok and check.get("status") == "FAIL" else "CANNOT_VERIFY"
+                    code = "TEST_FAIL" if isinstance(check, dict) and check.get("status") == "FAIL" else "CANNOT_VERIFY"
                     block(code, "Every check needs a name, command, integer exit_code of 0, PASS result, and reviewer rerun.")
                     break
             rerun = {check.get("command") for check in checks if isinstance(check, dict) and check.get("reviewer_reran") is True}

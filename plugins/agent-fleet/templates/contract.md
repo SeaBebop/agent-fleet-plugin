@@ -53,7 +53,7 @@ Every finding needs a repository path or command-output reference. Mark anything
 }
 ```
 
-Include a check entry for every command in `contract.json` `checks`. `exit_code` is the integer process exit status observed when the reviewer reran the command; it is required on every check, and a missing or non-zero value is a `CANNOT_VERIFY`. Use `status` `PASS`, `FAIL`, or `CANNOT_VERIFY`. A FAIL verdict lists blockers with the codes below. Redact secrets and personal data from evidence.
+Include a check entry for every command in `contract.json` `checks`. `exit_code` is the integer process exit status observed when the reviewer reran the command; it is required on every check. Blocker mapping per check: status `FAIL` maps to `TEST_FAIL` regardless of `exit_code`; status `PASS` (or any other non-`FAIL` status) with a missing, non-integer, boolean, or non-zero `exit_code` maps to `CANNOT_VERIFY`. Use `status` `PASS`, `FAIL`, or `CANNOT_VERIFY`. A FAIL verdict lists blockers with the codes below. Redact secrets and personal data from evidence.
 
 ## state.json (fleet_state.py)
 
@@ -72,8 +72,8 @@ At most two repair rounds are allowed, and the same blockers repeating stops the
 |---|---|
 | `MISSING_CONTEXT` | Research could not find a required dependency or detail. |
 | `SCOPE_CREEP` | The diff changes something outside the task. |
-| `TEST_FAIL` | A check failed when the reviewer reran it. |
-| `CANNOT_VERIFY` | A required check could not be executed. |
+| `TEST_FAIL` | A check has status `FAIL` when the reviewer reran it, whatever its `exit_code`. |
+| `CANNOT_VERIFY` | A required check could not be executed: status `PASS` (or any non-`FAIL` status) with a missing, non-integer, boolean, or non-zero `exit_code`. |
 | `CRITERIA_UNMET` | An acceptance criterion has no evidence. |
 | `SECURITY` | A security or privacy risk blocks approval. |
 | `COST` | Unbounded or always-on cost was introduced. |
