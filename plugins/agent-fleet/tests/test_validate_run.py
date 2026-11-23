@@ -48,7 +48,7 @@ def build_change(directory, phase="VALIDATE"):
         "review.json",
         {
             "change_id": CHANGE_ID,
-            "commit_sha": "abc123",
+            "commit_sha": "abc1234",
             "verdict": "PASS",
             "independent": True,
             "checks": [
@@ -90,6 +90,9 @@ class ValidateChangeTests(unittest.TestCase):
         change(data)
         path.write_text(json.dumps(data), encoding="utf-8")
         fleet_state.update_state(self.dir, None, None)
+
+    def unit_test_hash(self):
+        return hashlib.sha256((self.dir / "evidence" / "unit-tests.txt").read_bytes()).hexdigest()
 
     def set_regression_proof(self, adjust=None):
         evidence_file, evidence_sha256 = write_evidence(self.dir, "regression-baseline.txt", "1 failed\n")
@@ -200,6 +203,29 @@ class ValidateChangeTests(unittest.TestCase):
     def test_missing_commit_sha_fails(self):
         self.edit("review.json", lambda data: data.update(commit_sha=""))
         self.assertIn("GATE_FAILED", codes(validate_change(self.dir)))
+
+    def test_commit_sha_must_be_a_baseline_hash(self):
+        for value in ("working-tree", "abc123", "ABC1234", "abc1234 plus edits", 1234567):
+            with self.subTest(value=value):
+                self.edit("review.json", lambda data: data.update(commit_sha=value))
+                self.assertIn("GATE_FAILED", codes(validate_change(self.dir)))
+
+    def test_commit_sha_may_mark_a_working_tree_diff(self):
+        self.edit("review.json", lambda data: data.update(commit_sha="abc1234+working-tree"))
+        self.assertEqual("PASS", validate_change(self.dir)["verdict"])
+
+    def test_regression_proof_cannot_reuse_a_check_evidence_file(self):
+        self.set_regression_proof(
+            lambda proof: proof.update(evidence_file="evidence/./unit-tests.txt", evidence_sha256=self.unit_test_hash())
+        )
+        self.assertIn("CANNOT_VERIFY", codes(validate_change(self.dir)))
+
+    def test_two_checks_cannot_share_an_evidence_file(self):
+        def duplicate(data):
+            data["checks"].append(dict(data["checks"][0], name="again", command="python -m other"))
+
+        self.edit("review.json", duplicate)
+        self.assertIn("CANNOT_VERIFY", codes(validate_change(self.dir)))
 
     def test_change_id_mismatch_fails(self):
         self.edit("implementation.json", lambda data: data.update(change_id="other"))

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ ALLOWED_BLOCKERS = {
 }
 VALIDATABLE_PHASES = ("VALIDATE", "DONE")
 VALIDATABLE_STATUSES = ("IN_PROGRESS", "PASS")
+COMMIT_REFERENCE = re.compile(r"^[0-9a-f]{7,40}(\+working-tree)?$")
 
 
 def _text(value: Any) -> bool:
@@ -156,8 +158,9 @@ def validate_change(directory: Path) -> dict[str, Any]:
     if isinstance(review, dict):
         if review.get("change_id") != change_id:
             block("GATE_FAILED", "review.json change_id does not match state.json.")
-        if not _text(review.get("commit_sha")):
-            block("GATE_FAILED", "review.json must include commit_sha for traceability.")
+        commit = review.get("commit_sha")
+        if not (isinstance(commit, str) and COMMIT_REFERENCE.match(commit)):
+            block("GATE_FAILED", "review.json commit_sha must be the baseline commit hash, optionally followed by +working-tree.")
         if review.get("verdict") != "PASS" or review.get("independent") is not True:
             block("GATE_FAILED", "An independent reviewer PASS is required.")
 
@@ -199,6 +202,14 @@ def validate_change(directory: Path) -> dict[str, Any]:
             problem = _regression_proof_problem(directory, review.get("regression_proof"))
             if problem:
                 block("CANNOT_VERIFY", f"Behavior change needs a valid regression_proof: {problem}")
+
+        proof = review.get("regression_proof")
+        names = [item.get("evidence_file") for item in checks if isinstance(item, dict)] if isinstance(checks, list) else []
+        if behavior_change and isinstance(proof, dict):
+            names.append(proof.get("evidence_file"))
+        named = [Path(name).as_posix() for name in names if _text(name)]
+        if len(named) != len(set(named)):
+            block("CANNOT_VERIFY", "Each check and the regression proof need their own evidence file.")
 
         unresolved = review.get("blockers")
         if not isinstance(unresolved, list):

@@ -41,7 +41,7 @@ Every finding needs a repository path or command-output reference. Mark anything
 ```json
 {
   "change_id": "short-slug",
-  "commit_sha": "commit-or-working-tree-reference",
+  "commit_sha": "baseline-commit-hash or baseline-commit-hash+working-tree",
   "verdict": "PASS",
   "independent": true,
   "checks": [
@@ -55,9 +55,9 @@ Every finding needs a repository path or command-output reference. Mark anything
 }
 ```
 
-Evidence: every check has `evidence_file` and `evidence_sha256`. The file must be inside `evidence/` (the reviewer saves each command's output there with Bash redirection), and its SHA-256 must match. `regression_proof` is required only when the contract sets `behavior_change: true`: `command` is non-empty, `baseline_exit_code` is a non-zero integer, `fixed_exit_code` is `0`, and the proof's evidence file is verified the same way. The baseline run happens in a scratch copy of HEAD (`git archive <baseline> | tar -x -C <scratch>`, then the changed test files copied in), never in the working tree.
+Evidence: every check has `evidence_file` and `evidence_sha256`, and no two checks (or a check and the regression proof) may share a file. `commit_sha` is a 7 to 40 character lowercase hex commit hash, optionally followed by `+working-tree`; anything else is `GATE_FAILED`. The file must be inside `evidence/` (the reviewer saves each command's output there with Bash redirection), and its SHA-256 must match. `regression_proof` is required only when the contract sets `behavior_change: true`: `command` is non-empty, `baseline_exit_code` is a non-zero integer, `fixed_exit_code` is `0`, and the proof's evidence file is verified the same way. The baseline run happens in a scratch copy of HEAD (`git archive <baseline> | tar -x -C <scratch>`, then the changed test files copied in), never in the working tree.
 
-Include a check entry for every command in `contract.json` `checks`. `exit_code` is the integer process exit status observed when the reviewer reran the command; it is required on every check. Blocker mapping per check: status `FAIL` maps to `TEST_FAIL` regardless of `exit_code`; status `PASS` (or any other non-`FAIL` status) with a missing, non-integer, boolean, or non-zero `exit_code` maps to `CANNOT_VERIFY`. Use `status` `PASS`, `FAIL`, or `CANNOT_VERIFY`. A FAIL verdict lists blockers with the codes below. Redact secrets and personal data from evidence.
+Include a check entry for every command in `contract.json` `checks`. `exit_code` is the integer process exit status observed when the reviewer reran the command; it is required on every check. Blocker mapping per check: status `FAIL` maps to `TEST_FAIL` regardless of `exit_code`; status `PASS` (or any other non-`FAIL` status) with a missing, non-integer, boolean, or non-zero `exit_code` maps to `CANNOT_VERIFY`. Use `status` `PASS`, `FAIL`, or `CANNOT_VERIFY`. A FAIL verdict lists blockers with the codes below. Redact secrets and personal data from evidence while capturing it; a later edit breaks the recorded hash.
 
 ## state.json (fleet_state.py)
 
